@@ -534,7 +534,7 @@ module cheshire_soc import cheshire_pkg::*; #(
       .conf_req_i          ( reg_out_req[RegOut.llc] ),
       .conf_resp_o         ( reg_out_rsp[RegOut.llc] ),
       .cached_start_addr_i ( addr_t'(Cfg.LlcOutRegionStart) ),
-      .cached_end_addr_i   ( addr_t'(Cfg.LlcOutRegionEnd)   ),
+      .cached_end_addr_i   ( addr_t'('hC0000000) ),
       .spm_start_addr_i    ( addr_t'(AmSpm) ),
       .axi_llc_events_o    ( /* TODO: connect me to regs? */ )
     );
