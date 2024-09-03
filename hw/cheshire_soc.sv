@@ -433,8 +433,18 @@ module cheshire_soc import cheshire_pkg::*; #(
   //  LLC  //
   ///////////
 
-  axi_slv_req_t axi_llc_cut_req;
-  axi_slv_rsp_t axi_llc_cut_rsp;
+  `AXI_TYPEDEF_ALL(axi_demux_llc, addr_t, logic [$bits(axi_slv_id_t):0], axi_data_t, axi_strb_t, axi_user_t)
+
+  axi_slv_req_t axi_llc_cut_req, axi_llc_demuxed_req;
+  axi_slv_rsp_t axi_llc_cut_rsp, axi_llc_demuxed_rsp;
+  axi_slv_req_t axi_dram_demuxed_req;
+  axi_slv_rsp_t axi_dram_demuxed_rsp;
+  axi_slv_req_t axi_llc_remap_req;
+  axi_slv_rsp_t axi_llc_remap_rsp;
+
+  // logic [$bits(axi_slv_id_t):0]
+  axi_demux_llc_req_t axi_dram_demuxed_wide_id_req, axi_llc_out_req;
+  axi_demux_llc_resp_t axi_dram_demuxed_wide_id_rsp, axi_llc_out_rsp;
 
   if (Cfg.LlcOutConnect) begin : gen_llc_atomics
 
@@ -488,20 +498,73 @@ module cheshire_soc import cheshire_pkg::*; #(
 
   if (Cfg.LlcOutConnect && Cfg.LlcNotBypass) begin : gen_llc
 
-    axi_slv_req_t axi_llc_remap_req;
-    axi_slv_rsp_t axi_llc_remap_rsp;
+    // Do not cache higher 1 GiB
+
+    axi_demux #(
+      .AxiIdWidth     ( Cfg.AddrWidth          ),
+      .aw_chan_t      ( axi_slv_aw_chan_t      ),
+      .w_chan_t       ( axi_slv_w_chan_t       ),
+      .b_chan_t       ( axi_slv_b_chan_t       ),
+      .ar_chan_t      ( axi_slv_ar_chan_t      ),
+      .r_chan_t       ( axi_slv_r_chan_t       ),
+      .axi_req_t      ( axi_slv_req_t          ),
+      .axi_resp_t     ( axi_slv_rsp_t          ),
+      .NoMstPorts     ( 32'd2                  ),
+      .MaxTrans       ( axi_llc_pkg::MaxTrans  ),
+      .AxiLookBits    ( AxiSlvIdWidth          ),
+      .SpillAw        ( 1'b0                   ),
+      .SpillW         ( 1'b0                   ),
+      .SpillB         ( 1'b0                   ),
+      .SpillAr        ( 1'b0                   ),
+      .SpillR         ( 1'b0                   )
+    ) i_axi_bypass_demux (
+      .clk_i           ( clk_i                    ),
+      .rst_ni          ( rst_ni                   ),
+      .test_i          ( 1'b0                     ),
+      .slv_req_i       ( axi_llc_cut_req          ),
+      .slv_aw_select_i ( axi_llc_cut_req.aw.addr < addr_t'('hC0000000) ),
+      .slv_ar_select_i ( axi_llc_cut_req.ar.addr < addr_t'('hC0000000) ),
+      .slv_resp_o      ( axi_llc_cut_rsp          ),
+      .mst_reqs_o      ({axi_llc_demuxed_req, axi_dram_demuxed_req}),
+      .mst_resps_i     ({axi_llc_demuxed_rsp, axi_dram_demuxed_rsp})
+    );
+
+    axi_iw_converter #(
+      .AxiAddrWidth          ( Cfg.AddrWidth        ),
+      .AxiDataWidth          ( Cfg.AxiDataWidth     ),
+      .AxiUserWidth          ( Cfg.AxiUserWidth     ),
+      .AxiSlvPortIdWidth     ( $bits(axi_slv_id_t)  ),
+      .AxiSlvPortMaxUniqIds  ( 4                    ),
+      .AxiSlvPortMaxTxnsPerId( 4                    ),
+      .AxiSlvPortMaxTxns     ( 8                    ),
+      .AxiMstPortIdWidth     ( $bits(axi_slv_id_t) + 1 ),
+      .AxiMstPortMaxUniqIds  ( 4                    ),
+      .AxiMstPortMaxTxnsPerId( 4                    ),
+      .slv_req_t             ( axi_slv_req_t        ),
+      .slv_resp_t            ( axi_slv_rsp_t        ),
+      .mst_req_t             ( axi_demux_llc_req_t  ),
+      .mst_resp_t            ( axi_demux_llc_resp_t )
+    ) i_axi_iw_convert (
+      .clk_i  ,
+      .rst_ni ,
+      .slv_req_i  ( axi_dram_demuxed_req ),
+      .slv_resp_o ( axi_dram_demuxed_rsp ),
+      .mst_req_o  ( axi_dram_demuxed_wide_id_req ),
+      .mst_resp_i ( axi_dram_demuxed_wide_id_rsp )
+    );
 
     // Remap both cached and uncached accesses to single base.
     // This is necessary for routing in the LLC-internal interconnect.
     always_comb begin
-      axi_llc_remap_req = axi_llc_cut_req;
+      axi_llc_remap_req = axi_llc_demuxed_req;
 
-      if (axi_llc_cut_req.aw.addr & ~AmSpmRegionMask == AmSpmBaseUncached & ~AmSpmRegionMask)
-        axi_llc_remap_req.aw.addr  = AmSpm | (AmSpmRegionMask & axi_llc_cut_req.aw.addr);
-      if (axi_llc_cut_req.ar.addr & ~AmSpmRegionMask == AmSpmBaseUncached & ~AmSpmRegionMask)
-        axi_llc_remap_req.ar.addr = AmSpm | (AmSpmRegionMask & axi_llc_cut_req.ar.addr);
-      axi_llc_cut_rsp = axi_llc_remap_rsp;
+      if (axi_llc_demuxed_req.aw.addr & ~AmSpmRegionMask == AmSpmBaseUncached & ~AmSpmRegionMask)
+        axi_llc_remap_req.aw.addr  = AmSpm | (AmSpmRegionMask & axi_llc_demuxed_req.aw.addr);
+      if (axi_llc_demuxed_req.ar.addr & ~AmSpmRegionMask == AmSpmBaseUncached & ~AmSpmRegionMask)
+        axi_llc_remap_req.ar.addr = AmSpm | (AmSpmRegionMask & axi_llc_demuxed_req.ar.addr);
     end
+
+    assign axi_llc_demuxed_rsp = axi_llc_remap_rsp;
 
     axi_llc_reg_wrap #(
       .SetAssociativity ( Cfg.LlcSetAssoc        ),
@@ -518,8 +581,8 @@ module cheshire_soc import cheshire_pkg::*; #(
       .AxiUserIdLsb     ( Cfg.LlcUserLsb         ),
       .slv_req_t        ( axi_slv_req_t          ),
       .slv_resp_t       ( axi_slv_rsp_t          ),
-      .mst_req_t        ( axi_ext_llc_req_t      ),
-      .mst_resp_t       ( axi_ext_llc_rsp_t      ),
+      .mst_req_t        ( axi_demux_llc_req_t    ),
+      .mst_resp_t       ( axi_demux_llc_resp_t   ),
       .reg_req_t        ( reg_req_t              ),
       .reg_resp_t       ( reg_rsp_t              ),
       .rule_full_t      ( addr_rule_t            )
@@ -529,14 +592,48 @@ module cheshire_soc import cheshire_pkg::*; #(
       .test_i              ( test_mode_i ),
       .slv_req_i           ( axi_llc_remap_req ),
       .slv_resp_o          ( axi_llc_remap_rsp ),
-      .mst_req_o           ( axi_llc_mst_req_o ),
-      .mst_resp_i          ( axi_llc_mst_rsp_i ),
+      .mst_req_o           ( axi_llc_out_req ),
+      .mst_resp_i          ( axi_llc_out_rsp ),
       .conf_req_i          ( reg_out_req[RegOut.llc] ),
       .conf_resp_o         ( reg_out_rsp[RegOut.llc] ),
       .cached_start_addr_i ( addr_t'(Cfg.LlcOutRegionStart) ),
-      .cached_end_addr_i   ( addr_t'('hC0000000) ),
+      .cached_end_addr_i   ( addr_t'(Cfg.LlcOutRegionEnd) ),
       .spm_start_addr_i    ( addr_t'(AmSpm) ),
       .axi_llc_events_o    ( /* TODO: connect me to regs? */ )
+    );
+
+    // this unit widens the AXI ID by one!
+    axi_mux #(
+      .SlvAxiIDWidth ( AxiSlvIdWidth+1                   ),
+      .slv_aw_chan_t ( axi_demux_llc_aw_chan_t           ),
+      .mst_aw_chan_t ( axi_llc_aw_chan_t             ),
+      .w_chan_t      ( axi_demux_llc_w_chan_t            ),
+      .slv_b_chan_t  ( axi_demux_llc_b_chan_t            ),
+      .mst_b_chan_t  ( axi_llc_b_chan_t              ),
+      .slv_ar_chan_t ( axi_demux_llc_ar_chan_t           ),
+      .mst_ar_chan_t ( axi_llc_ar_chan_t             ),
+      .slv_r_chan_t  ( axi_demux_llc_r_chan_t            ),
+      .mst_r_chan_t  ( axi_llc_r_chan_t              ),
+      .slv_req_t     ( axi_demux_llc_req_t               ),
+      .slv_resp_t    ( axi_demux_llc_resp_t              ),
+      .mst_req_t     ( axi_llc_req_t                 ),
+      .mst_resp_t    ( axi_llc_rsp_t                ),
+      .NoSlvPorts    ( 32'd2                     ),
+      .MaxWTrans     ( axi_llc_pkg::MaxTrans     ),
+      .FallThrough   ( 1'b0                      ), // No registers
+      .SpillAw       ( 1'b0                      ), // No registers
+      .SpillW        ( 1'b0                      ), // No registers
+      .SpillB        ( 1'b0                      ), // No registers
+      .SpillAr       ( 1'b0                      ), // No registers
+      .SpillR        ( 1'b0                      )  // No registers
+    ) i_axi_bypass_mux (
+      .clk_i       ( clk_i                      ),
+      .rst_ni      ( rst_ni                     ),
+      .test_i      ( '0                         ),
+      .slv_reqs_i  ({axi_llc_out_req, axi_dram_demuxed_wide_id_req }),
+      .slv_resps_o ({axi_llc_out_rsp, axi_dram_demuxed_wide_id_rsp }),
+      .mst_req_o   ( axi_llc_mst_req_o               ),
+      .mst_resp_i  ( axi_llc_mst_rsp_i               )
     );
 
   end else if (Cfg.LlcOutConnect) begin : gen_llc_bypass

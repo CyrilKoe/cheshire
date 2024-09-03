@@ -22,7 +22,7 @@
   localparam type __name``_mst_id_t  = logic [__cfg.AxiMstIdWidth  -1:0]; \
   localparam type __name``_slv_id_t  = logic [__cfg.AxiMstIdWidth + \
       $clog2(__name``__AxiIn.num_in)-1:0]; \
-  localparam type __name_llc``_id_t  = logic [$bits(__name``_slv_id_t)+__cfg.LlcNotBypass-1:0]; \
+  localparam type __name_llc``_id_t  = logic [$bits(__name``_slv_id_t)+2-1:0]; \
   `CHESHIRE_TYPEDEF_AXI_CT(__name``_mst, __addr_t, \
       __name``_mst_id_t, __name``_data_t, __name``_strb_t, __name``_user_t) \
   `CHESHIRE_TYPEDEF_AXI_CT(__name``_slv, __addr_t, \
