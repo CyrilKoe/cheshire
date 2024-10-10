@@ -437,7 +437,7 @@ module cheshire_soc import cheshire_pkg::*; #(
 
   axi_slv_req_t axi_llc_cut_req, axi_llc_demuxed_req;
   axi_slv_rsp_t axi_llc_cut_rsp, axi_llc_demuxed_rsp;
-  axi_slv_req_t axi_dram_demuxed_req;
+  axi_slv_req_t axi_dram_demuxed_to_translate_req, axi_dram_demuxed_req;
   axi_slv_rsp_t axi_dram_demuxed_rsp;
   axi_slv_req_t axi_llc_remap_req;
   axi_slv_rsp_t axi_llc_remap_rsp;
@@ -522,12 +522,18 @@ module cheshire_soc import cheshire_pkg::*; #(
       .rst_ni          ( rst_ni                   ),
       .test_i          ( 1'b0                     ),
       .slv_req_i       ( axi_llc_cut_req          ),
-      .slv_aw_select_i ( axi_llc_cut_req.aw.addr < addr_t'('hC0000000) ),
-      .slv_ar_select_i ( axi_llc_cut_req.ar.addr < addr_t'('hC0000000) ),
+      .slv_aw_select_i ( axi_llc_cut_req.aw.addr < addr_t'('hE0000000) ),
+      .slv_ar_select_i ( axi_llc_cut_req.ar.addr < addr_t'('hE0000000) ),
       .slv_resp_o      ( axi_llc_cut_rsp          ),
-      .mst_reqs_o      ({axi_llc_demuxed_req, axi_dram_demuxed_req}),
+      .mst_reqs_o      ({axi_llc_demuxed_req, axi_dram_demuxed_to_translate_req}),
       .mst_resps_i     ({axi_llc_demuxed_rsp, axi_dram_demuxed_rsp})
     );
+
+    always_comb begin
+      axi_dram_demuxed_req = axi_dram_demuxed_to_translate_req;
+      axi_dram_demuxed_req.aw.addr = axi_dram_demuxed_to_translate_req.aw.addr - 'h20000000;
+      axi_dram_demuxed_req.ar.addr = axi_dram_demuxed_to_translate_req.ar.addr - 'h20000000;
+    end
 
     axi_iw_converter #(
       .AxiAddrWidth          ( Cfg.AddrWidth        ),
