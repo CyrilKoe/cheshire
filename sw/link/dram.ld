@@ -9,7 +9,7 @@
 INCLUDE common.ldh
 
 SECTIONS {
-  __stack_pointer$  = ORIGIN(dram) + LENGTH(dram) - 8;
+  __stack_pointer$  = ORIGIN(dram) + LENGTH(dram)/2 - 8;
 
   .text : {
     *(.text._start)
